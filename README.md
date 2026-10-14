@@ -53,11 +53,7 @@ The location resolver checks the local address database first. It then checks th
 
 The official TAK Server example enables its standard TLS input on port `8089`. See the [official CoreConfig example](https://github.com/TAK-Product-Center/Server/blob/main/src/takserver-core/example/CoreConfig.example.xml) and the [official TAK Server repository](https://github.com/TAK-Product-Center/Server).
 
-## Protect credentials
 
-**Warning:** Do not commit `feeds.yml`, `.env`, private keys, PKCS#12 files, production certificates, logs, or generated databases. A public commit exposes every secret in its Git history.
-
-The repository ignores these files. Keep the deployed files outside Git backups too.
 
 ## Install
 
@@ -139,9 +135,9 @@ broadcastify_example:
   chat_room: "DISPATCH"
   whisper_model: "medium.en"
   min_confidence: 0.40
-  locations_file: /app/locations_marquette.yml
+  locations_file: /app/locations_yourlocation.yml
   address_db: /app/data/marquette_addresses.db
-  geocode_suffix: "Marquette County, Michigan, USA"
+  geocode_suffix: "Some County, Some_state, USA"
   sender_uid: dispatch-feed-example
   sender_callsign: DISPATCH
 ```
@@ -250,7 +246,7 @@ For example:
 ```bash
 docker compose run --rm manpack-feeds \
   python3 -u feed_manager.py --config /app/feeds.yml \
-  --feeds broadcastify_marquette weather
+  --feeds broadcastify_location weather
 ```
 
 ## Troubleshooting
