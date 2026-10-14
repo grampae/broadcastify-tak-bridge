@@ -45,7 +45,7 @@ Broadcastify audio stream
 - Supports separate labels for the left and right audio channels.
 - Sends transcripts to a configured ATAK GeoChat room.
 - Creates incident markers when a transcript contains a known location.
-- Uses a local location file and an optional private address database.
+- Uses a local location file and an optional address database.
 - Provides an optional external geocoding fallback.
 - Provides a local JSON health endpoint.
 - Keeps passwords outside the YAML configuration file.
@@ -60,14 +60,6 @@ Broadcastify audio stream
 - Sufficient memory and storage for the selected faster-whisper model.
 
 See the [official TAK Server repository](https://github.com/TAK-Product-Center/Server) and its [CoreConfig example](https://github.com/TAK-Product-Center/Server/blob/main/src/takserver-core/example/CoreConfig.example.xml).
-
-## Protect private data
-
-**Warning:** Do not commit `.env`, `config.yml`, `locations.yml`, production certificates, private keys, model caches, transcripts, or address databases.
-
-Location aliases, feed URLs, talk-group details, and transcription prompts can identify an operating area. Review all files before you grant repository access.
-
-The repository contains only fictional location examples. Git ignores the local deployment files.
 
 ## Install the service
 
@@ -177,7 +169,7 @@ whisper:
     Public safety radio dispatch. Engine, ladder, medic, police, fire, and EMS.
 ```
 
-Use `initial_prompt` for common agency terms, unit names, and road names. Keep the completed prompt private if it identifies your coverage area.
+Use `initial_prompt` for common agency terms, unit names, and road names.
 
 The first startup downloads the selected model into `models/`. Keep `HF_HUB_OFFLINE=0` until the download finishes. You can then set `HF_HUB_OFFLINE=1` for an offline deployment.
 
@@ -201,7 +193,7 @@ unit_map:
 
 The resolver uses the longest matching name or alias. The `unit_map` corrects common spoken unit names after transcription.
 
-You can also provide a private SQLite address database. See [data/README.md](data/README.md) for its schema.
+You can also provide a SQLite address database. See [data/README.md](data/README.md) for its schema.
 
 External geocoding is disabled by default. When enabled, the service sends detected address text to the configured public geocoder. Do not enable this function when dispatch text must remain inside your deployment.
 
@@ -270,7 +262,7 @@ Then complete these checks:
 | `broadcastify` | Controls the stream credentials, channels, and audio chunks. |
 | `whisper` | Controls the faster-whisper model and transcript threshold. |
 | `tak_output` | Controls the GeoChat identity, room, and marker lifetime. |
-| `locations` | Controls private location data and optional geocoding. |
+| `locations` | Controls location data and optional geocoding. |
 
 Set `service.log_transcripts: true` only during controlled troubleshooting. Transcript text can contain personal or operational information.
 
@@ -300,7 +292,7 @@ Confirm these items:
 - `tak_output.send_markers` is `true`.
 - `locations.yml` contains the spoken name or an alias.
 - The latitude and longitude are valid.
-- `locations.address_database` points to the correct private database when you use exact address matching.
+- `locations.address_database` points to the correct database when you use exact address matching.
 
 ### The model does not load
 
@@ -317,14 +309,8 @@ python -m pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-The documentation is STE-aligned. Controlled-dictionary verification is still required for formal ASD-STE100 conformance.
-
 ## Stop the service
 
 ```bash
 docker compose down
 ```
-
-## License status
-
-This private project does not grant a public software license. Select a license before any public release.
