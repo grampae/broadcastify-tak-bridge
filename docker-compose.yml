@@ -1,0 +1,36 @@
+services:
+  manpack-feeds:
+    build: .
+    container_name: manpack-feeds
+    restart: unless-stopped
+    # Host networking permits a local TAK Server at 127.0.0.1:8089.
+    # It also permits outbound connections for enabled feeds.
+    network_mode: host
+    volumes:
+      - ./feeds.yml:/app/feeds.yml:ro
+      - ./feeds:/app/feeds:ro
+      - ./feed_manager.py:/app/feed_manager.py:ro
+      - ./geo.py:/app/geo.py:ro
+      - ./dedup.py:/app/dedup.py:ro
+      - ./cot_sender.py:/app/cot_sender.py:ro
+      - ./dashboard:/app/dashboard:ro
+      - ./data:/app/data
+      - feeds-logs:/app/logs
+      - ./hf_cache:/root/.cache/huggingface
+      - ./build_address_db.py:/app/build_address_db.py:ro
+      - ./locations_marquette.yml:/app/locations_marquette.yml:ro
+      - ./locations_providence.yml:/app/locations_providence.yml:ro
+      - ./certs:/app/certs:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=America/Detroit
+      # Set HF_HUB_OFFLINE=1 after faster-whisper downloads the model.
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-0}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  feeds-logs:

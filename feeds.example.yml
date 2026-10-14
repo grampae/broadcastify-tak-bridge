@@ -1,0 +1,166 @@
+tak_server:
+  host: tak.example.com
+  port: 8089
+  ssl: true
+  cert: /app/certs/client.pem
+  key: /app/certs/client.key
+  ca: /app/certs/ca.pem
+  verify_hostname: true
+  sender_uid: dispatch-feed
+
+# Bind the status dashboard to this address.
+netbird_ip: 127.0.0.1
+# Bounding boxes
+area_of_interest:
+  name: "Marquette County AO"
+  north: 47.17
+  south: 46.22
+  east: -86.92
+  west: -88.65
+
+extended_area:
+  name: "Upper Peninsula Waters"
+  north: 48.5
+  south: 45.0
+  east: -83.0
+  west: -92.5
+
+# CoT stale times (seconds)
+# Markers persist on ATAK map for this long after last update
+# Survives brief cellular outages
+stale_times:
+  adsb: 600        # 10 min
+  vessel: 1800     # 30 min
+  weather: 0       # 0 = use NWS expires field directly
+  wildfire: 43200  # 12 hours
+  aprs: 1800       # 30 min
+  s2: 7200         # 2 hours
+  broadcastify: 1800  # 30 min
+
+feeds:
+
+  # NWS weather alerts — free, no key needed
+  weather:
+    enabled: true
+    poll_interval: 300
+    user_agent: "tak-feeds/1.0 contact@example.com"
+    zones:
+      - MIZ001  # Marquette
+      - MIZ002  # Alger
+      - MIZ003  # Baraga
+      - MIZ004  # Iron
+      - MIZ005  # Dickinson
+      - MIZ006  # Ontonagon
+      - MIZ007  # Houghton
+      - MIZ008  # Keweenaw
+      - MIZ009  # Luce
+      - MIZ010  # Schoolcraft
+    alert_types:
+      - Tornado Warning
+      - Tornado Watch
+      - Severe Thunderstorm Warning
+      - Severe Thunderstorm Watch
+      - Flash Flood Warning
+      - Winter Storm Warning
+      - Blizzard Warning
+      - High Wind Warning
+    min_severity: Moderate
+
+  # NIFC wildfire perimeters — free ArcGIS REST, no key
+  wildfire:
+    enabled: true
+    poll_interval: 900
+    url: "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query"
+
+  # S2 Underground CIP/COP — free public ArcGIS, no key
+  s2_underground:
+    enabled: false
+    poll_interval: 900
+    base_url: "https://services.arcgis.com/DO4gTjwJVIJ7O9Ca/arcgis/rest/services"
+    service: "S2_Underground_CIP_COP_Main_BaseData/FeatureServer"
+    layer_id: 0
+    fail_silently: true
+    cache_on_failure: true
+
+  # APRS — receive only, no key needed (use callsign if licensed)
+  aprs:
+    enabled: false
+    server: rotate.aprs2.net
+    port: 14580
+    callsign: N0CALL
+    passcode: -1
+    filter: "r/46.7/-87.8/200"
+    show_mobile: true
+    show_fixed: false
+    show_weather: false
+
+  # Broadcastify — Marquette County Public Safety (Feed 23343)
+  # Stereo: Left = Police/Fire/EMS, Right = Paging/Fire/EMS/Air
+  broadcastify_marquette:
+    type: broadcastify
+    enabled: false
+    stream_url: "CHANGE_ME"
+    premium_username: "CHANGE_ME"
+    premium_password: "CHANGE_ME"
+    chat_room: "DISPATCH_MQT"
+    whisper_model: "medium.en"
+    min_confidence: 0.2
+    stale_seconds: 1800
+    locations_file: /app/locations_marquette.yml
+    address_db: /app/data/marquette_addresses.db
+    geocode_suffix: "Marquette County, Michigan, USA"
+    sender_uid: dispatch-feed-marquette
+    sender_callsign: DISPATCH-MQT
+    pushover_user_key: ""
+    pushover_app_token: ""
+    alert_keywords:
+      - "ar-15"
+      - "ar15"
+      - "shots fired"
+      - "active shooter"
+      - "officer down"
+      - "mayday"
+      - "10-33"
+      - "weapon"
+      - "hostage"
+      - "negaunee"
+
+
+  broadcastify_providence:
+    type: broadcastify
+    enabled: false
+    stream_url: "CHANGE_ME"
+    premium_username: "CHANGE_ME"
+    premium_password: "CHANGE_ME"
+    chat_room: "DISPATCH_PROV"
+    locations_file: /app/locations_providence.yml
+    whisper_model: "medium.en"
+    min_confidence: 0.55
+    stale_seconds: 1800
+    address_db: /app/data/ri_addresses.db
+    geocode_suffix: "Rhode Island, USA"
+    sender_uid: dispatch-feed-providence
+    sender_callsign: DISPATCH-PROV
+
+
+  # ADS-B enrichment from OpenSky or a local dump1090/readsb endpoint
+  adsb:
+    enabled: false
+    source: opensky
+    opensky_username: ""
+    opensky_password: ""
+    poll_interval: 360
+    show_military: true
+    show_commercial: true
+    show_general_aviation: true
+    altitude_max_ft: 50000
+    enrich_faa: true
+    enrich_weg: true
+    faa_db_path: /app/data/faa_aircraft.db
+    weg_db_path: /app/data/weg_aircraft.db
+
+  # AIS vessel tracking through AISstream.io
+  vessel:
+    enabled: false
+    source: aisstream
+    api_key: "CHANGE_ME"

@@ -1,0 +1,30 @@
+# Local configuration and credentials
+feeds.yml
+.env
+.env.*
+!.env.example
+certs/*
+!certs/README.md
+
+# Runtime data
+data/*
+!data/README.md
+logs/
+hf_cache/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
