@@ -1,24 +1,26 @@
-# Local configuration and credentials
-feeds.yml
+# Private configuration and credentials
 .env
 .env.*
 !.env.example
+config.yml
+locations.yml
 certs/*
 !certs/README.md
 
-# Runtime data
+# Runtime data and model cache
 data/*
 !data/README.md
+models/
 logs/
-hf_cache/
-*.log
 *.db
 *.sqlite
 *.sqlite3
+*.log
 
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .ruff_cache/
 .venv/

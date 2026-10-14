@@ -1,0 +1,18 @@
+# Replace these fictional entries with locations for your coverage area.
+# Keep the completed locations.yml file private.
+locations:
+  - name: Example Fire Station
+    latitude: 40.0000
+    longitude: -100.0000
+    aliases:
+      - central station
+
+  - name: Example Highway Junction
+    latitude: 40.0100
+    longitude: -100.0100
+    aliases:
+      - highway junction
+
+unit_map:
+  engine one: Engine 1
+  medic two: Medic 2

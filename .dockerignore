@@ -1,11 +1,12 @@
 .git
-.gitignore
+.github
 .env*
-feeds.yml
+config.yml
+locations.yml
 certs
 data
+models
 logs
-hf_cache
 __pycache__
 **/__pycache__
 *.py[cod]

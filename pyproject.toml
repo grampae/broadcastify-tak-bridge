@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "broadcastify-tak-bridge"
+version = "0.1.0"
+description = "Transcribe Broadcastify audio and publish GeoChat and CoT to TAK Server"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "faster-whisper>=1.0,<2",
+  "numpy>=1.24,<3",
+  "PyYAML>=6,<7",
+  "requests>=2.31,<3",
+]
+
+[project.scripts]
+broadcastify-tak-bridge = "broadcastify_tak_bridge.service:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,54 @@
+service:
+  log_level: INFO
+  log_transcripts: false
+  health_host: 127.0.0.1
+  health_port: 8080
+
+tak_server:
+  host: ${TAK_HOST}
+  port: 8089
+  tls: true
+  cert: /app/certs/client.pem
+  key: /app/certs/client.key
+  ca: /app/certs/ca.pem
+  verify_hostname: true
+  queue_size: 500
+  reconnect_seconds: 5
+
+broadcastify:
+  stream_url: ${BROADCASTIFY_STREAM_URL}
+  username: ${BROADCASTIFY_USERNAME}
+  password: ${BROADCASTIFY_PASSWORD}
+  chunk_seconds: 10
+  reconnect_max_seconds: 120
+  channels:
+    - source: left
+      label: DISPATCH-L
+    - source: right
+      label: DISPATCH-R
+
+whisper:
+  model: medium.en
+  device: cpu
+  compute_type: int8
+  language: en
+  min_confidence: 0.35
+  initial_prompt: >-
+    Public safety radio dispatch. Engine, ladder, medic, police, fire, EMS,
+    traffic collision, and structure fire.
+
+tak_output:
+  chat_room: DISPATCH
+  sender_uid: broadcastify-bridge
+  sender_callsign: DISPATCH
+  send_markers: true
+  marker_stale_seconds: 1800
+
+locations:
+  file: /app/locations.yml
+  address_database: ""
+  geocoding:
+    enabled: false
+    region_suffix: ""
+    country_code: ""
+    user_agent: broadcastify-tak-bridge/0.1 contact@example.com

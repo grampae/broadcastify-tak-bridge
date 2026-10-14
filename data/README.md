@@ -1,15 +1,17 @@
-# Runtime data
+# Optional address database
 
-The feed manager writes its status file and local SQLite databases to this directory. Git ignores those files.
+The service can use a private SQLite database for exact address matches.
+Set `locations.address_database` to its container path.
 
-Build the optional address databases with these commands:
+The database must contain this table:
 
-```bash
-docker compose run --rm manpack-feeds \
-  python3 build_address_db.py --service marquette \
-  --output /app/data/marquette_addresses.db
-
-docker compose run --rm manpack-feeds \
-  python3 build_address_db.py --service ri \
-  --output /app/data/ri_addresses.db
+```sql
+CREATE TABLE addresses (
+    address TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lon REAL NOT NULL
+);
 ```
+
+The service performs a case-insensitive exact match on `address`.
+Git ignores database files in this directory.

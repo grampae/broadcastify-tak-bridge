@@ -1,36 +1,34 @@
 services:
-  manpack-feeds:
+  broadcastify-tak-bridge:
     build: .
-    container_name: manpack-feeds
+    container_name: broadcastify-tak-bridge
     restart: unless-stopped
-    # Host networking permits a local TAK Server at 127.0.0.1:8089.
-    # It also permits outbound connections for enabled feeds.
     network_mode: host
-    volumes:
-      - ./feeds.yml:/app/feeds.yml:ro
-      - ./feeds:/app/feeds:ro
-      - ./feed_manager.py:/app/feed_manager.py:ro
-      - ./geo.py:/app/geo.py:ro
-      - ./dedup.py:/app/dedup.py:ro
-      - ./cot_sender.py:/app/cot_sender.py:ro
-      - ./dashboard:/app/dashboard:ro
-      - ./data:/app/data
-      - feeds-logs:/app/logs
-      - ./hf_cache:/root/.cache/huggingface
-      - ./build_address_db.py:/app/build_address_db.py:ro
-      - ./locations_marquette.yml:/app/locations_marquette.yml:ro
-      - ./locations_providence.yml:/app/locations_providence.yml:ro
-      - ./certs:/app/certs:ro
     environment:
-      - PYTHONUNBUFFERED=1
-      - TZ=America/Detroit
-      # Set HF_HUB_OFFLINE=1 after faster-whisper downloads the model.
-      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-0}
+      BROADCASTIFY_STREAM_URL: ${BROADCASTIFY_STREAM_URL:-}
+      BROADCASTIFY_USERNAME: ${BROADCASTIFY_USERNAME:-}
+      BROADCASTIFY_PASSWORD: ${BROADCASTIFY_PASSWORD:-}
+      TAK_HOST: ${TAK_HOST:-127.0.0.1}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      HF_HOME: /models
+    volumes:
+      - ./config.yml:/app/config.yml:ro
+      - ./locations.yml:/app/locations.yml:ro
+      - ./certs:/app/certs:ro
+      - ./data:/app/data:ro
+      - ./models:/models
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
+        max-size: 10m
         max-file: "3"
-
-volumes:
-  feeds-logs:

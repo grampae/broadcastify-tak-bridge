@@ -1,7 +1,4 @@
-requests>=2.31.0
-pyyaml>=6.0
-aprslib>=0.7.0
-python-dateutil>=2.8.2
-faster-whisper>=1.0.0
-numpy>=1.24.0
-websocket-client>=1.6.0
+faster-whisper>=1.0,<2
+numpy>=1.24,<3
+PyYAML>=6,<7
+requests>=2.31,<3

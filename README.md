@@ -1,89 +1,104 @@
-# TAK Feed Manager
+# Broadcastify TAK Bridge
 
-TAK Feed Manager converts public-safety and situational-awareness feeds into Cursor-on-Target (CoT) events. It sends the events directly to an official TAK Server through mutual TLS.
+Broadcastify TAK Bridge is a standalone service for ATAK deployments. It converts an authenticated Broadcastify audio stream into TAK GeoChat messages and optional Cursor-on-Target (CoT) markers.
 
-The Broadcastify feed uses FFmpeg and faster-whisper. It sends dispatch transcripts as ATAK GeoChat messages. It also creates map markers when it can resolve a location.
+The service uses faster-whisper for speech recognition. It connects directly to an official TAK Server through mutual TLS on the standard CoT input port.
 
-## Supported feeds
+This project is a server-side bridge. It is not an Android plugin, and it does not require an ATAK application package.
 
-| Feed | Input | TAK output |
-|---|---|---|
-| Broadcastify | Authenticated stereo audio stream | GeoChat messages and incident markers |
-| NWS | Weather alerts | Weather markers |
-| NIFC | Wildfire perimeter service | Wildfire markers |
-| APRS | APRS-IS | Station markers |
-| ADS-B | OpenSky or local dump1090/readsb | Aircraft markers |
-| AIS | AISstream.io | Vessel markers |
-| S2 Underground | ArcGIS feature service | Incident markers |
-
-## Broadcastify data flow
+## Data flow
 
 ```text
-Broadcastify audio
-        |
-        v
-curl -> FFmpeg -> 16 kHz PCM -> faster-whisper
-                                  |
-                                  v
-                    transcript filters and classification
-                                  |
-                    +-------------+-------------+
-                    |                           |
-                    v                           v
-              ATAK GeoChat             location resolver
-                                                |
-                                                v
-                                          CoT marker
-                    \___________________________/
-                                  |
-                                  v
-                       TAK Server TLS port 8089
+Broadcastify audio stream
+          |
+          v
+       FFmpeg
+          |
+          v
+16 kHz mono PCM chunks
+          |
+          v
+   faster-whisper
+          |
+          v
+ transcript filtering
+          |
+          +----------------------+
+          |                      |
+          v                      v
+    TAK GeoChat          optional location lookup
+                                 |
+                                 v
+                           TAK CoT marker
+          \______________________/
+                     |
+                     v
+          TAK Server mutual TLS
+                     |
+                     v
+                    ATAK
 ```
 
-The location resolver checks the local address database first. It then checks the configured towns, roads, landmarks, and aliases. Nominatim is the final fallback.
+## Main features
+
+- Transcribes mono or stereo Broadcastify audio.
+- Supports separate labels for the left and right audio channels.
+- Sends transcripts to a configured ATAK GeoChat room.
+- Creates incident markers when a transcript contains a known location.
+- Uses a local location file and an optional private address database.
+- Provides an optional external geocoding fallback.
+- Provides a local JSON health endpoint.
+- Keeps passwords outside the YAML configuration file.
+- Hides transcript text from service logs by default.
 
 ## Requirements
 
 - A Linux host with Docker Engine and Docker Compose.
-- An official TAK Server that accepts TLS clients on port `8089`.
-- A TAK client certificate, its private key, and the TAK certificate-authority certificate in PEM format.
-- Broadcastify stream credentials for each enabled Broadcastify feed.
-- Internet access for each enabled online feed.
+- An authenticated audio stream that you have permission to use.
+- An official TAK Server with a TLS input on port `8089`.
+- A TAK client certificate, private key, and certificate-authority certificate.
 - Sufficient memory and storage for the selected faster-whisper model.
 
-The official TAK Server example enables its standard TLS input on port `8089`. See the [official CoreConfig example](https://github.com/TAK-Product-Center/Server/blob/main/src/takserver-core/example/CoreConfig.example.xml) and the [official TAK Server repository](https://github.com/TAK-Product-Center/Server).
+See the [official TAK Server repository](https://github.com/TAK-Product-Center/Server) and its [CoreConfig example](https://github.com/TAK-Product-Center/Server/blob/main/src/takserver-core/example/CoreConfig.example.xml).
 
-## Protect credentials
+## Protect private data
 
-**Warning:** Do not commit `feeds.yml`, `.env`, private keys, PKCS#12 files, production certificates, logs, or generated databases. A public commit exposes every secret in its Git history.
+**Warning:** Do not commit `.env`, `config.yml`, `locations.yml`, production certificates, private keys, model caches, transcripts, or address databases.
 
-The repository ignores these files. Keep the deployed files outside Git backups too.
+Location aliases, feed URLs, talk-group details, and transcription prompts can identify an operating area. Review all files before you grant repository access.
 
-## Install
+The repository contains only fictional location examples. Git ignores the local deployment files.
 
-### 1. Create the local configuration
+## Install the service
 
-Copy the example file:
+### 1. Create the local files
+
+Copy the example files:
 
 ```bash
-cp feeds.example.yml feeds.yml
-chmod 600 feeds.yml
+cp .env.example .env
+cp config.example.yml config.yml
+cp locations.example.yml locations.yml
+chmod 600 .env config.yml locations.yml
 ```
 
-Set these values in `feeds.yml`:
+Edit `.env` and set these values:
 
-- `tak_server.host`
-- The paths under `tak_server.cert`, `tak_server.key`, and `tak_server.ca`
-- The area boundaries and enabled feeds
-- The credentials for each enabled feed
+```dotenv
+BROADCASTIFY_STREAM_URL=https://your-authorized-audio-stream
+BROADCASTIFY_USERNAME=your-account-name
+BROADCASTIFY_PASSWORD=your-account-password
+TAK_HOST=tak.example.com
+HF_HUB_OFFLINE=0
+```
 
-Keep all credential-based feeds disabled until their values are valid.
+Docker Compose passes these values to the service. The service replaces matching `${VARIABLE}` references in `config.yml`.
 
 ### 2. Install the TAK client certificates
 
 Use a dedicated TAK client identity for this service. Do not use a TAK Server private key.
 
-If TAK Server generated PEM files, copy the client certificate, client key, and CA certificate into `certs/`:
+Put these PEM files in `certs/`:
 
 ```text
 certs/client.pem
@@ -91,7 +106,7 @@ certs/client.key
 certs/ca.pem
 ```
 
-If you have a PKCS#12 client package, convert it before startup:
+If you received a PKCS#12 file, convert it:
 
 ```bash
 openssl pkcs12 -in client.p12 -clcerts -nokeys -out certs/client.pem
@@ -100,11 +115,9 @@ openssl pkcs12 -in client.p12 -cacerts -nokeys -out certs/ca.pem
 chmod 600 certs/client.key
 ```
 
-Some PKCS#12 packages do not contain the CA certificate. In that case, get `ca.pem` from the TAK Server administrator.
+Some PKCS#12 files do not include the CA certificate. Get `ca.pem` from the TAK Server administrator when it is absent.
 
-The sender does not load `.p12` or `.pfx` files directly.
-
-Verify the certificate chain:
+Verify the client certificate:
 
 ```bash
 openssl verify -CAfile certs/ca.pem certs/client.pem
@@ -121,196 +134,197 @@ openssl s_client \
   -verify_return_error </dev/null
 ```
 
-Replace `tak.example.com` with the configured TAK Server name.
+Replace `tak.example.com` with your TAK Server name.
 
-Set `verify_hostname: true` when the server name matches the certificate. If you must connect by an unmatched IP address, set it to `false`. The sender still verifies the certificate chain against `ca.pem`.
+Keep `verify_hostname: true` when the configured name matches the server certificate. If the deployment uses an unmatched IP address, set it to `false`. The service continues to validate the certificate authority.
 
-### 3. Configure Broadcastify
+### 3. Select the audio channels
 
-Each Broadcastify instance is a separate item under `feeds`:
+The example configuration processes a stereo stream as two channels:
 
 ```yaml
-broadcastify_example:
-  type: broadcastify
-  enabled: true
-  stream_url: "https://example.invalid/stream"
-  premium_username: "YOUR_USERNAME"
-  premium_password: "YOUR_PASSWORD"
-  chat_room: "DISPATCH"
-  whisper_model: "medium.en"
-  min_confidence: 0.40
-  locations_file: /app/locations_marquette.yml
-  address_db: /app/data/marquette_addresses.db
-  geocode_suffix: "Marquette County, Michigan, USA"
-  sender_uid: dispatch-feed-example
-  sender_callsign: DISPATCH
+broadcastify:
+  channels:
+    - source: left
+      label: DISPATCH-L
+    - source: right
+      label: DISPATCH-R
 ```
 
-The current capture path expects stereo audio. The left and right channels run as separate transcription workers.
-
-### 4. Customize location data
-
-Edit a location YAML file for each coverage area. Each file can define towns, landmarks, roads, aliases, and spoken unit names.
+Use one `mono` channel for a mono stream:
 
 ```yaml
-towns:
-  example town: [46.5000, -87.5000, ["example township"]]
+broadcastify:
+  channels:
+    - source: mono
+      label: DISPATCH
+```
 
-landmarks:
-  example hospital: [46.5100, -87.4900, ["the hospital"]]
+Each configured channel creates one audio-stream connection.
 
-roads:
-  route-1: [46.5000, -87.5000, ["route 1", "highway 1"]]
+### 4. Configure faster-whisper
+
+Set the model and recognition options in `config.yml`:
+
+```yaml
+whisper:
+  model: medium.en
+  device: cpu
+  compute_type: int8
+  language: en
+  min_confidence: 0.35
+  initial_prompt: >-
+    Public safety radio dispatch. Engine, ladder, medic, police, fire, and EMS.
+```
+
+Use `initial_prompt` for common agency terms, unit names, and road names. Keep the completed prompt private if it identifies your coverage area.
+
+The first startup downloads the selected model into `models/`. Keep `HF_HUB_OFFLINE=0` until the download finishes. You can then set `HF_HUB_OFFLINE=1` for an offline deployment.
+
+### 5. Configure location markers
+
+GeoChat does not require location data. The service sends a marker only when it resolves a location.
+
+Edit `locations.yml`:
+
+```yaml
+locations:
+  - name: Example Fire Station
+    latitude: 40.0000
+    longitude: -100.0000
+    aliases:
+      - central station
 
 unit_map:
   engine one: Engine 1
 ```
 
-Set `locations_file` to the container path for that file. Add its read-only mount to `docker-compose.yml` when you create a new file.
+The resolver uses the longest matching name or alias. The `unit_map` corrects common spoken unit names after transcription.
 
-### 5. Build the optional address databases
+You can also provide a private SQLite address database. See [data/README.md](data/README.md) for its schema.
 
-The repository does not include generated SQLite databases. Build the databases that your enabled feeds use:
+External geocoding is disabled by default. When enabled, the service sends detected address text to the configured public geocoder. Do not enable this function when dispatch text must remain inside your deployment.
 
-```bash
-docker compose build
+### 6. Configure the TAK output
 
-docker compose run --rm manpack-feeds \
-  python3 build_address_db.py --service marquette \
-  --output /app/data/marquette_addresses.db
+Set a stable sender identity and a GeoChat room:
 
-docker compose run --rm manpack-feeds \
-  python3 build_address_db.py --service ri \
-  --output /app/data/ri_addresses.db
+```yaml
+tak_output:
+  chat_room: DISPATCH
+  sender_uid: broadcastify-bridge
+  sender_callsign: DISPATCH
+  send_markers: true
+  marker_stale_seconds: 1800
 ```
 
-The build script downloads public address features from the configured ArcGIS services.
-
-### 6. Download the Whisper model
-
-The first Broadcastify startup downloads the configured faster-whisper model into `hf_cache/`. Keep `HF_HUB_OFFLINE=0` for the first startup.
-
-To download the model before service startup, run:
-
-```bash
-docker compose run --rm manpack-feeds python3 -c \
-  "from faster_whisper import WhisperModel; WhisperModel('medium.en', device='cpu', compute_type='int8')"
-```
-
-After the download succeeds, set this value in a local `.env` file when the production host has no internet access:
-
-```dotenv
-HF_HUB_OFFLINE=1
-```
+ATAK clients connected to the same TAK Server receive the GeoChat messages and markers. No ATAK-side installation is necessary.
 
 ### 7. Start the service
 
-Validate and start the deployment:
+Validate the Compose file and start the container:
 
 ```bash
 docker compose config -q
 docker compose up -d --build
-docker compose logs --tail=100 -f manpack-feeds
+docker compose logs --tail=100 -f broadcastify-tak-bridge
 ```
 
-A successful TAK connection produces a message similar to this one:
+The first model download can take several minutes.
 
-```text
-COTSender connected to tak.example.com:8089 (ssl=True)
-```
+## Verify the deployment
 
-## Verify operation
-
-Use these checks after startup:
-
-1. Open ATAK and connect it to the same TAK Server.
-2. Confirm that enabled position feeds create map markers.
-3. Confirm that Broadcastify transcripts appear in the configured GeoChat room.
-4. Confirm that a transcript with a resolved location creates a CoT marker.
-5. Check the local health endpoint.
+Check the health endpoint:
 
 ```bash
 curl http://127.0.0.1:8080/health
 ```
 
-The dashboard listens on the configured `netbird_ip`. It uses `127.0.0.1` when that setting is absent.
+A running service returns data similar to this example:
 
-## Configuration notes
-
-- `stale_times` controls how long ATAK retains each marker type.
-- `min_confidence` rejects Broadcastify transcripts below the configured score.
-- `address_db` selects the local SQLite database for exact address lookup.
-- `geocode_suffix` restricts fallback geocoding to the intended region.
-- `sender_uid` must be stable and unique for each Broadcastify instance.
-- `verify_hostname` controls TLS hostname validation. It does not disable CA validation.
-- `--feeds` starts only the specified configured feed names.
-
-For example:
-
-```bash
-docker compose run --rm manpack-feeds \
-  python3 -u feed_manager.py --config /app/feeds.yml \
-  --feeds broadcastify_marquette weather
+```json
+{
+  "service": "broadcastify-tak-bridge",
+  "state": "running",
+  "last_success": null,
+  "processed_transcripts": 0,
+  "errors": 0,
+  "last_error": "",
+  "tak_queue_size": 0
+}
 ```
+
+Then complete these checks:
+
+1. Connect ATAK to the configured TAK Server.
+2. Confirm that the configured GeoChat room receives a transcript.
+3. Speak or wait for a configured location alias.
+4. Confirm that ATAK receives a marker for that location.
+
+## Configuration reference
+
+| Section | Purpose |
+|---|---|
+| `service` | Controls logging and the health endpoint. |
+| `tak_server` | Controls the mutual-TLS connection to TAK Server. |
+| `broadcastify` | Controls the stream credentials, channels, and audio chunks. |
+| `whisper` | Controls the faster-whisper model and transcript threshold. |
+| `tak_output` | Controls the GeoChat identity, room, and marker lifetime. |
+| `locations` | Controls private location data and optional geocoding. |
+
+Set `service.log_transcripts: true` only during controlled troubleshooting. Transcript text can contain personal or operational information.
 
 ## Troubleshooting
 
 ### TAK Server rejects the connection
 
-Confirm the following items:
+Confirm these items:
 
-- Port `8089` is reachable from the container host.
-- `client.pem` is a client certificate from the correct TAK certificate authority.
+- Port `8089` is reachable from the Docker host.
+- `client.pem` is a valid client certificate.
 - `client.key` matches `client.pem`.
 - `ca.pem` validates the TAK Server certificate.
-- The client certificate is valid and is not revoked.
-- The system clocks on both hosts are correct.
+- The client certificate is not expired or revoked.
+- The clocks on both hosts are correct.
 
-### Whisper cannot load the model
+### No audio reaches faster-whisper
 
-Set `HF_HUB_OFFLINE=0` and start the service once with internet access. Confirm that `hf_cache/` contains the model before you enable offline mode.
+Confirm the stream URL and credentials. Then inspect the container logs for an HTTP or FFmpeg error.
 
-### GeoChat works but no incident marker appears
+For a stereo stream, confirm that each configured source is `left` or `right`. For a mono stream, configure only `mono`.
 
-The transcript did not resolve to a location. Confirm these items:
+### GeoChat works but markers do not appear
 
-- The configured location YAML file contains the spoken place name or an alias.
-- The configured address database exists in `data/`.
-- `address_db` points to the correct database.
-- `geocode_suffix` identifies the correct region.
+Confirm these items:
 
-### No Broadcastify transcript appears
+- `tak_output.send_markers` is `true`.
+- `locations.yml` contains the spoken name or an alias.
+- The latitude and longitude are valid.
+- `locations.address_database` points to the correct private database when you use exact address matching.
 
-Confirm the stream URL and credentials. Then inspect the logs for FFmpeg, stream, or Whisper errors.
+### The model does not load
 
-## Test
+Set `HF_HUB_OFFLINE=0` and restart the service with internet access. After the model appears in `models/`, you can enable offline mode.
 
-Create a Python environment and run the unit tests:
+## Development
+
+Create a virtual environment and install the project:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-The tests parse generated CoT as XML and check the certificate-path validation logic.
-
-## Repository data policy
-
-The repository includes the location YAML files because they define application behavior. It excludes these operational artifacts:
-
-- `feeds.yml`
-- `certs/`
-- `data/*.db`
-- `logs/`
-- `hf_cache/`
-- Python bytecode and test caches
-
-Review local location data before publication. Remove any private address or person-specific alias that is not necessary.
+The documentation is STE-aligned. Controlled-dictionary verification is still required for formal ASD-STE100 conformance.
 
 ## Stop the service
 
 ```bash
 docker compose down
 ```
+
+## License status
+
+This private project does not grant a public software license. Select a license before any public release.
