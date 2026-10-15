@@ -74,6 +74,27 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "mono, left, or right"):
                 load_config(path)
 
+    def test_example_configuration_loads_with_documented_environment(self):
+        example = Path(__file__).resolve().parents[1] / "config.example.yml"
+        with patch.dict(
+            os.environ,
+            {
+                "TAK_HOST": "tak.example.invalid",
+                "BROADCASTIFY_STREAM_URL": "https://example.invalid/audio",
+                "BROADCASTIFY_USERNAME": "example-user",
+                "BROADCASTIFY_PASSWORD": "example-password",
+                "WHISPER_MODEL": "medium.en",
+                "TAK_CHAT_ROOM": "DISPATCH",
+                "TAK_SENDER_CALLSIGN": "DISPATCH",
+            },
+            clear=False,
+        ):
+            config = load_config(example)
+
+        self.assertEqual(config["broadcastify"]["channels"][0]["source"], "mono")
+        self.assertEqual(config["whisper"]["model"], "medium.en")
+        self.assertEqual(config["tak_output"]["chat_room"], "DISPATCH")
+
 
 if __name__ == "__main__":
     unittest.main()

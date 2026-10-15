@@ -1,0 +1,526 @@
+#!/usr/bin/env bash
+
+# Friendly setup and lifecycle commands for Broadcastify TAK Bridge.
+
+set -uo pipefail
+
+BRIDGE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+COMPOSE_SERVICE="broadcastify-tak-bridge"
+FAILURES=0
+WARNINGS=0
+
+cd "$BRIDGE_ROOT" || exit 1
+
+say() {
+    printf '%s\n' "$*"
+}
+
+pass() {
+    printf '  [OK] %s\n' "$*"
+}
+
+fail() {
+    printf '  [ERROR] %s\n' "$*" >&2
+    FAILURES=$((FAILURES + 1))
+}
+
+warn() {
+    printf '  [WARN] %s\n' "$*" >&2
+    WARNINGS=$((WARNINGS + 1))
+}
+
+have() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+prompt() {
+    local message="$1"
+    local default_value="${2:-}"
+    local answer
+    if [[ -n "$default_value" ]]; then
+        read -r -p "$message [$default_value]: " answer
+        printf '%s' "${answer:-$default_value}"
+    else
+        read -r -p "$message: " answer
+        printf '%s' "$answer"
+    fi
+}
+
+prompt_secret() {
+    local message="$1"
+    local answer
+    read -r -s -p "$message: " answer
+    printf '\n' >&2
+    printf '%s' "$answer"
+}
+
+confirm() {
+    local message="$1"
+    local answer
+    read -r -p "$message [y/N]: " answer
+    [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]
+}
+
+reject_newline() {
+    local label="$1"
+    local value="$2"
+    if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+        say "$label cannot contain a newline." >&2
+        exit 2
+    fi
+}
+
+dotenv_quote() {
+    local value="$1"
+    value=${value//\'/\\\'}
+    printf "'%s'" "$value"
+}
+
+yaml_quote() {
+    local value="$1"
+    value=${value//\'/\'\'}
+    printf "'%s'" "$value"
+}
+
+read_env_value() {
+    local key="$1"
+    local line value
+    [[ -f .env ]] || return 1
+    line=$(grep -m1 -E "^${key}=" .env 2>/dev/null) || return 1
+    value=${line#*=}
+    if [[ "$value" == \'*\' && ${#value} -ge 2 ]]; then
+        value=${value:1:${#value}-2}
+        value=${value//\\\'/\'}
+    elif [[ "$value" == \"*\" && ${#value} -ge 2 ]]; then
+        value=${value:1:${#value}-2}
+    fi
+    printf '%s' "$value"
+}
+
+write_env() {
+    local stream_url="$1"
+    local username="$2"
+    local password="$3"
+    local tak_host="$4"
+    local model="$5"
+    local room="$6"
+    local callsign="$7"
+
+    {
+        printf 'BROADCASTIFY_STREAM_URL=%s\n' "$(dotenv_quote "$stream_url")"
+        printf 'BROADCASTIFY_USERNAME=%s\n' "$(dotenv_quote "$username")"
+        printf 'BROADCASTIFY_PASSWORD=%s\n' "$(dotenv_quote "$password")"
+        printf 'TAK_HOST=%s\n' "$(dotenv_quote "$tak_host")"
+        printf 'WHISPER_MODEL=%s\n' "$(dotenv_quote "$model")"
+        printf 'TAK_CHAT_ROOM=%s\n' "$(dotenv_quote "$room")"
+        printf 'TAK_SENDER_CALLSIGN=%s\n' "$(dotenv_quote "$callsign")"
+        printf 'HF_HUB_OFFLINE=0\n'
+    } > .env
+    chmod 600 .env
+}
+
+write_config() {
+    local channel_mode="$1"
+    local left_label="$2"
+    local right_label="$3"
+
+    {
+        printf '%s\n' \
+            'service:' \
+            '  log_level: INFO' \
+            '  log_transcripts: false' \
+            '  health_host: 127.0.0.1' \
+            '  health_port: 8080' \
+            '' \
+            'tak_server:' \
+            '  host: ${TAK_HOST}' \
+            '  port: 8089' \
+            '  tls: true' \
+            '  cert: /app/certs/client.pem' \
+            '  key: /app/certs/client.key' \
+            '  ca: /app/certs/ca.pem' \
+            '  verify_hostname: true' \
+            '' \
+            'broadcastify:' \
+            '  stream_url: ${BROADCASTIFY_STREAM_URL}' \
+            '  username: ${BROADCASTIFY_USERNAME}' \
+            '  password: ${BROADCASTIFY_PASSWORD}' \
+            '  chunk_seconds: 10' \
+            '  channels:'
+        if [[ "$channel_mode" == "stereo" ]]; then
+            printf '    - source: left\n      label: %s\n' "$(yaml_quote "$left_label")"
+            printf '    - source: right\n      label: %s\n' "$(yaml_quote "$right_label")"
+        else
+            printf '    - source: mono\n      label: %s\n' "$(yaml_quote "$left_label")"
+        fi
+        printf '%s\n' \
+            '' \
+            'whisper:' \
+            '  model: ${WHISPER_MODEL}' \
+            '  device: cpu' \
+            '  compute_type: int8' \
+            '  language: en' \
+            '  min_confidence: 0.35' \
+            '' \
+            'tak_output:' \
+            '  chat_room: ${TAK_CHAT_ROOM}' \
+            '  sender_uid: broadcastify-bridge' \
+            '  sender_callsign: ${TAK_SENDER_CALLSIGN}' \
+            '  send_markers: true' \
+            '  marker_stale_seconds: 1800' \
+            '' \
+            'locations:' \
+            '  file: /app/locations.yml' \
+            '  address_database: ""' \
+            '  geocoding:' \
+            '    enabled: false'
+    } > config.yml
+    chmod 600 config.yml
+}
+
+import_pkcs12() {
+    local bundle="$1"
+    local password="$2"
+    local temp_dir ca_path
+
+    if [[ ! -f "$bundle" ]]; then
+        say "Certificate bundle not found: $bundle" >&2
+        return 1
+    fi
+    if ! have openssl; then
+        say "OpenSSL is required to import a PKCS#12 certificate." >&2
+        return 1
+    fi
+
+    temp_dir=$(mktemp -d) || return 1
+    if ! openssl pkcs12 -in "$bundle" -clcerts -nokeys \
+        -out "$temp_dir/client.pem" -passin fd:3 3<<<"$password" >/dev/null 2>&1; then
+        say "Could not extract the client certificate. Check the bundle password." >&2
+        rm -rf -- "$temp_dir"
+        return 1
+    fi
+    if ! openssl pkcs12 -in "$bundle" -nocerts -nodes \
+        -out "$temp_dir/client.key" -passin fd:3 3<<<"$password" >/dev/null 2>&1; then
+        say "Could not extract the private key. Check the bundle password." >&2
+        rm -rf -- "$temp_dir"
+        return 1
+    fi
+    openssl pkcs12 -in "$bundle" -cacerts -nokeys \
+        -out "$temp_dir/ca.pem" -passin fd:3 3<<<"$password" >/dev/null 2>&1 || true
+
+    if ! grep -q 'BEGIN CERTIFICATE' "$temp_dir/ca.pem" 2>/dev/null; then
+        say "The bundle does not contain a CA certificate."
+        ca_path=$(prompt "Path to the TAK Server CA certificate")
+        if [[ ! -f "$ca_path" ]]; then
+            say "CA certificate not found: $ca_path" >&2
+            rm -rf -- "$temp_dir"
+            return 1
+        fi
+        cp -- "$ca_path" "$temp_dir/ca.pem"
+    fi
+
+    mkdir -p certs
+    mv -- "$temp_dir/client.pem" certs/client.pem
+    mv -- "$temp_dir/client.key" certs/client.key
+    mv -- "$temp_dir/ca.pem" certs/ca.pem
+    chmod 600 certs/client.pem certs/client.key certs/ca.pem
+    rmdir "$temp_dir"
+    pass "Imported the TAK client certificate"
+}
+
+setup_bridge() {
+    local stream_url username password tak_host channel_mode
+    local left_label right_label model room callsign bundle bundle_password
+
+    if [[ ! -t 0 ]]; then
+        say "Setup is interactive and must be run from a terminal." >&2
+        return 2
+    fi
+
+    say "Broadcastify TAK Bridge guided setup"
+    say "Press Enter to accept a value shown in brackets."
+    say ""
+
+    if [[ -e .env || -e config.yml || -e locations.yml ]]; then
+        if ! confirm "Local configuration already exists. Replace .env and config.yml (locations.yml is preserved)"; then
+            say "No files were changed."
+            return 0
+        fi
+    fi
+
+    stream_url=$(prompt "Authorized Broadcastify stream URL")
+    while [[ -z "$stream_url" ]]; do
+        say "The stream URL is required."
+        stream_url=$(prompt "Authorized Broadcastify stream URL")
+    done
+    username=$(prompt "Broadcastify username (leave blank if not required)")
+    password=$(prompt_secret "Broadcastify password (leave blank if not required)")
+    tak_host=$(prompt "TAK Server hostname" "tak.example.com")
+
+    channel_mode=$(prompt "Audio layout: mono or stereo" "mono")
+    while [[ "$channel_mode" != "mono" && "$channel_mode" != "stereo" ]]; do
+        say "Enter mono or stereo."
+        channel_mode=$(prompt "Audio layout: mono or stereo" "mono")
+    done
+    if [[ "$channel_mode" == "stereo" ]]; then
+        left_label=$(prompt "Left-channel label" "DISPATCH-L")
+        right_label=$(prompt "Right-channel label" "DISPATCH-R")
+    else
+        left_label=$(prompt "Channel label" "DISPATCH")
+        right_label=""
+    fi
+
+    model=$(prompt "faster-whisper model" "medium.en")
+    room=$(prompt "TAK GeoChat room" "DISPATCH")
+    callsign=$(prompt "TAK sender callsign" "DISPATCH")
+
+    for item in "$stream_url" "$username" "$password" "$tak_host" \
+        "$left_label" "$right_label" "$model" "$room" "$callsign"; do
+        reject_newline "Configuration values" "$item"
+    done
+
+    write_env "$stream_url" "$username" "$password" "$tak_host" \
+        "$model" "$room" "$callsign"
+    write_config "$channel_mode" "$left_label" "$right_label"
+    if [[ ! -f locations.yml ]]; then
+        printf 'locations: []\n\nunit_map: {}\n' > locations.yml
+        chmod 600 locations.yml
+    fi
+    mkdir -p certs data models
+    pass "Created the local configuration files"
+
+    bundle=$(prompt "Path to a .p12/.pfx certificate (leave blank if PEM files are already in certs/)")
+    if [[ -n "$bundle" ]]; then
+        bundle_password=$(prompt_secret "PKCS#12 password")
+        import_pkcs12 "$bundle" "$bundle_password" || return 1
+    fi
+
+    say ""
+    doctor
+    local result=$?
+    if [[ $result -eq 0 ]]; then
+        say ""
+        say "Setup is complete. Start the service with: ./bridge start"
+    else
+        say ""
+        say "Setup saved your answers, but doctor found an error to correct."
+    fi
+    return "$result"
+}
+
+check_file() {
+    local path="$1"
+    local label="$2"
+    if [[ -s "$path" ]]; then
+        pass "$label is present"
+        return 0
+    fi
+    fail "$label is missing: $path"
+    return 1
+}
+
+doctor() {
+    local host="" cert_pub="" key_pub="" expiry="" compose_ready=0
+    FAILURES=0
+    WARNINGS=0
+
+    say "Checking Broadcastify TAK Bridge..."
+
+    if have docker; then
+        pass "Docker is installed"
+        if docker compose version >/dev/null 2>&1; then
+            pass "Docker Compose is available"
+            if docker info >/dev/null 2>&1; then
+                pass "The Docker service is reachable"
+            else
+                fail "Docker is installed, but the Docker service is not reachable"
+            fi
+        else
+            fail "Docker Compose is not available"
+        fi
+    else
+        fail "Docker is not installed"
+    fi
+
+    check_file .env ".env" || true
+    check_file config.yml "config.yml" || true
+    check_file locations.yml "locations.yml" || true
+
+    if [[ -s .env && -s config.yml ]] && have docker && docker compose version >/dev/null 2>&1; then
+        if docker compose config -q >/dev/null 2>&1; then
+            pass "Docker Compose accepts the configuration"
+            compose_ready=1
+        else
+            fail "Docker Compose rejected the configuration; run 'docker compose config -q' for details"
+        fi
+    fi
+
+    host=$(read_env_value TAK_HOST || true)
+    if [[ -z "$host" || "$host" == *example.invalid* || "$host" == "tak.example.com" ]]; then
+        fail "TAK_HOST does not contain a real TAK Server hostname"
+    else
+        pass "TAK Server hostname is configured"
+    fi
+    local stream_url
+    stream_url=$(read_env_value BROADCASTIFY_STREAM_URL || true)
+    if [[ -z "$stream_url" || "$stream_url" == *example.invalid* ]]; then
+        fail "BROADCASTIFY_STREAM_URL does not contain an authorized stream URL"
+    else
+        pass "Broadcastify stream URL is configured"
+    fi
+
+    check_file certs/client.pem "Client certificate" || true
+    check_file certs/client.key "Client private key" || true
+    check_file certs/ca.pem "TAK Server CA certificate" || true
+
+    if have openssl; then
+        pass "OpenSSL is installed"
+        if [[ -s certs/client.pem ]]; then
+            if openssl x509 -in certs/client.pem -noout >/dev/null 2>&1; then
+                pass "Client certificate is valid PEM"
+                if openssl x509 -checkend 0 -in certs/client.pem -noout >/dev/null 2>&1; then
+                    expiry=$(openssl x509 -enddate -noout -in certs/client.pem 2>/dev/null)
+                    pass "Client certificate is not expired (${expiry#notAfter=})"
+                    if ! openssl x509 -checkend 2592000 -in certs/client.pem -noout >/dev/null 2>&1; then
+                        warn "Client certificate expires within 30 days"
+                    fi
+                else
+                    fail "Client certificate is expired"
+                fi
+            else
+                fail "Client certificate is not valid PEM"
+            fi
+        fi
+        if [[ -s certs/client.key ]]; then
+            if openssl pkey -in certs/client.key -noout >/dev/null 2>&1; then
+                pass "Client private key is readable"
+            else
+                fail "Client private key is invalid or requires a password"
+            fi
+        fi
+        if [[ -s certs/client.pem && -s certs/client.key ]]; then
+            cert_pub=$(openssl x509 -in certs/client.pem -pubkey -noout 2>/dev/null \
+                | openssl pkey -pubin -outform DER 2>/dev/null \
+                | openssl dgst -sha256 2>/dev/null) || true
+            key_pub=$(openssl pkey -in certs/client.key -pubout -outform DER 2>/dev/null \
+                | openssl dgst -sha256 2>/dev/null) || true
+            if [[ -n "$cert_pub" && "$cert_pub" == "$key_pub" ]]; then
+                pass "Client certificate and private key match"
+            else
+                fail "Client certificate and private key do not match"
+            fi
+        fi
+        if [[ -s certs/client.pem && -s certs/ca.pem ]]; then
+            if openssl verify -CAfile certs/ca.pem certs/client.pem >/dev/null 2>&1; then
+                pass "The CA verifies the client certificate"
+            else
+                warn "The supplied CA does not directly verify the client certificate"
+            fi
+        fi
+    else
+        fail "OpenSSL is not installed, so certificates cannot be checked"
+    fi
+
+    if [[ $compose_ready -eq 1 && -n "$host" && -s certs/client.pem && \
+        -s certs/client.key && -s certs/ca.pem ]] && have openssl && have timeout; then
+        if timeout 15 openssl s_client -connect "${host}:8089" \
+            -cert certs/client.pem -key certs/client.key -CAfile certs/ca.pem \
+            -verify_return_error -verify_hostname "$host" </dev/null >/dev/null 2>&1; then
+            pass "TAK Server TLS connection succeeded"
+        else
+            warn "Could not verify a TLS connection to ${host}:8089 (the service will retry after startup)"
+        fi
+    fi
+
+    say ""
+    if [[ $FAILURES -gt 0 ]]; then
+        say "Doctor found $FAILURES error(s) and $WARNINGS warning(s)."
+        return 1
+    fi
+    say "Doctor found no blocking errors and $WARNINGS warning(s)."
+    return 0
+}
+
+require_compose() {
+    if ! have docker || ! docker compose version >/dev/null 2>&1; then
+        say "Docker with the Compose plugin is required." >&2
+        return 1
+    fi
+}
+
+start_bridge() {
+    doctor || {
+        say "Fix the errors above, then run './bridge start' again." >&2
+        return 1
+    }
+    say "Starting Broadcastify TAK Bridge..."
+    docker compose up -d --build || return $?
+    say "The service is starting. The first model download can take several minutes."
+    say "Follow progress with: ./bridge logs"
+}
+
+status_bridge() {
+    require_compose || return 1
+    docker compose ps
+    say ""
+    if have curl && curl --fail --silent --show-error \
+        --max-time 3 http://127.0.0.1:8080/health; then
+        printf '\n'
+    else
+        say "Health endpoint is not ready at http://127.0.0.1:8080/health" >&2
+        return 1
+    fi
+}
+
+logs_bridge() {
+    require_compose || return 1
+    docker compose logs --tail=100 -f "$COMPOSE_SERVICE"
+}
+
+stop_bridge() {
+    require_compose || return 1
+    docker compose down
+}
+
+update_bridge() {
+    require_compose || return 1
+    if ! have git; then
+        say "Git is required to update this checkout." >&2
+        return 1
+    fi
+    git pull --ff-only || return $?
+    docker compose build --pull || return $?
+    say "Update downloaded. Run './bridge start' to start the new version."
+}
+
+usage() {
+    cat <<'EOF'
+Usage: ./bridge COMMAND
+
+Commands:
+  setup    Create configuration and import a TAK certificate
+  doctor   Check Docker, configuration, certificates, and TAK connectivity
+  start    Validate, build, and start the service
+  status   Show the container and service health
+  logs     Follow recent service logs
+  stop     Stop the service
+  update   Download the latest code and rebuild the container
+  help     Show this help
+EOF
+}
+
+case "${1:-help}" in
+    setup) setup_bridge ;;
+    doctor) doctor ;;
+    start) start_bridge ;;
+    status) status_bridge ;;
+    logs) logs_bridge ;;
+    stop) stop_bridge ;;
+    update) update_bridge ;;
+    help|-h|--help) usage ;;
+    *)
+        say "Unknown command: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+esac

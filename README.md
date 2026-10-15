@@ -53,7 +53,7 @@ Broadcastify audio stream
 
 ## Requirements
 
-- A Linux host with Docker Engine and Docker Compose.
+- A Linux host with Docker Engine, Docker Compose, and OpenSSL.
 - An authenticated audio stream that you have permission to use.
 - An official TAK Server with a TLS input on port `8089`.
 - A TAK client certificate, private key, and certificate-authority certificate.
@@ -61,36 +61,20 @@ Broadcastify audio stream
 
 See the [official TAK Server repository](https://github.com/TAK-Product-Center/Server) and its [CoreConfig example](https://github.com/TAK-Product-Center/Server/blob/main/src/takserver-core/example/CoreConfig.example.xml).
 
-## Install the service
+## Quick start
 
-### 1. Create the local files
-
-Copy the example files:
+Clone the repository, then run the guided setup:
 
 ```bash
-cp .env.example .env
-cp config.example.yml config.yml
-cp locations.example.yml locations.yml
-chmod 600 .env config.yml locations.yml
+git clone https://github.com/grampae/broadcastify-tak-bridge.git
+cd broadcastify-tak-bridge
+./bridge setup
+./bridge start
 ```
 
-Edit `.env` and set these values:
+The setup asks for the stream, TAK Server, audio layout, model, and chat room. It creates the private configuration files, imports a `.p12` or `.pfx` certificate, and checks the completed installation. Existing local configuration is not replaced without confirmation.
 
-```dotenv
-BROADCASTIFY_STREAM_URL=https://your-authorized-audio-stream
-BROADCASTIFY_USERNAME=your-account-name
-BROADCASTIFY_PASSWORD=your-account-password
-TAK_HOST=tak.example.com
-HF_HUB_OFFLINE=0
-```
-
-Docker Compose passes these values to the service. The service replaces matching `${VARIABLE}` references in `config.yml`.
-
-### 2. Install the TAK client certificates
-
-Use a dedicated TAK client identity for this service. Do not use a TAK Server private key.
-
-Put these PEM files in `certs/`:
+If you already have PEM files, leave the certificate-bundle answer blank and put these files in `certs/`:
 
 ```text
 certs/client.pem
@@ -98,86 +82,30 @@ certs/client.key
 certs/ca.pem
 ```
 
-If you received a PKCS#12 file, convert it:
+Use a dedicated TAK client identity for this service. Do not use a TAK Server private key.
+
+The first startup downloads the selected faster-whisper model and can take several minutes. Follow its progress with:
 
 ```bash
-openssl pkcs12 -in client.p12 -clcerts -nokeys -out certs/client.pem
-openssl pkcs12 -in client.p12 -nocerts -nodes -out certs/client.key
-openssl pkcs12 -in client.p12 -cacerts -nokeys -out certs/ca.pem
-chmod 600 certs/client.key
+./bridge logs
 ```
 
-Some PKCS#12 files do not include the CA certificate. Get `ca.pem` from the TAK Server administrator when it is absent.
+## Manage the service
 
-Verify the client certificate:
+| Command | Purpose |
+|---|---|
+| `./bridge doctor` | Check Docker, configuration, certificates, and TAK connectivity. |
+| `./bridge start` | Validate, build, and start the service. |
+| `./bridge status` | Show the container state and local health response. |
+| `./bridge logs` | Follow the most recent service logs. |
+| `./bridge stop` | Stop the service. |
+| `./bridge update` | Fast-forward the Git checkout and rebuild the image. |
 
-```bash
-openssl verify -CAfile certs/ca.pem certs/client.pem
-```
+Run `./bridge setup` again to replace `.env` and `config.yml`. The command asks for confirmation first and preserves an existing `locations.yml`.
 
-Test the TAK Server connection:
+## Optional location markers
 
-```bash
-openssl s_client \
-  -connect tak.example.com:8089 \
-  -cert certs/client.pem \
-  -key certs/client.key \
-  -CAfile certs/ca.pem \
-  -verify_return_error </dev/null
-```
-
-Replace `tak.example.com` with your TAK Server name.
-
-Keep `verify_hostname: true` when the configured name matches the server certificate. If the deployment uses an unmatched IP address, set it to `false`. The service continues to validate the certificate authority.
-
-### 3. Select the audio channels
-
-The example configuration processes a stereo stream as two channels:
-
-```yaml
-broadcastify:
-  channels:
-    - source: left
-      label: DISPATCH-L
-    - source: right
-      label: DISPATCH-R
-```
-
-Use one `mono` channel for a mono stream:
-
-```yaml
-broadcastify:
-  channels:
-    - source: mono
-      label: DISPATCH
-```
-
-Each configured channel creates one audio-stream connection.
-
-### 4. Configure faster-whisper
-
-Set the model and recognition options in `config.yml`:
-
-```yaml
-whisper:
-  model: medium.en
-  device: cpu
-  compute_type: int8
-  language: en
-  min_confidence: 0.35
-  initial_prompt: >-
-    Public safety radio dispatch. Engine, ladder, medic, police, fire, and EMS.
-```
-
-Use `initial_prompt` for common agency terms, unit names, and road names.
-
-The first startup downloads the selected model into `models/`. Keep `HF_HUB_OFFLINE=0` until the download finishes. You can then set `HF_HUB_OFFLINE=1` for an offline deployment.
-
-### 5. Configure location markers
-
-GeoChat does not require location data. The service sends a marker only when it resolves a location.
-
-Edit `locations.yml`:
+GeoChat works without location data. A new guided installation creates an empty `locations.yml`; add private locations only when you want the bridge to create markers:
 
 ```yaml
 locations:
@@ -191,45 +119,28 @@ unit_map:
   engine one: Engine 1
 ```
 
-The resolver uses the longest matching name or alias. The `unit_map` corrects common spoken unit names after transcription.
+The resolver uses the longest matching name or alias. The `unit_map` corrects common spoken unit names after transcription. You can also provide a SQLite address database; see [data/README.md](data/README.md) for its schema.
 
-You can also provide a SQLite address database. See [data/README.md](data/README.md) for its schema.
+External geocoding is disabled by default. When enabled in `config.yml`, the service sends detected address text to the configured public geocoder. Do not enable it when dispatch text must remain inside your deployment.
 
-External geocoding is disabled by default. When enabled, the service sends detected address text to the configured public geocoder. Do not enable this function when dispatch text must remain inside your deployment.
+## Advanced configuration
 
-### 6. Configure the TAK output
+The guided setup puts common values in `.env` and operational options in `config.yml`. Docker Compose passes the environment values to the service, which replaces matching `${VARIABLE}` references in the YAML file.
 
-Set a stable sender identity and a GeoChat room:
+- Change the faster-whisper model, TAK room, and sender callsign in `.env`.
+- Change confidence, chunk duration, TLS behavior, marker lifetime, and geocoding in `config.yml`.
+- Keep `verify_hostname: true` when the TAK hostname matches the server certificate. If a deployment must use an unmatched IP address, set it to `false`; certificate-authority validation remains enabled.
+- Each configured left or right channel opens one connection to the audio stream. Use a single `mono` channel unless the source is known to carry separate traffic on each stereo channel.
+- Keep `HF_HUB_OFFLINE=0` until the first model download completes. It can then be set to `1` for offline operation.
 
-```yaml
-tak_output:
-  chat_room: DISPATCH
-  sender_uid: broadcastify-bridge
-  sender_callsign: DISPATCH
-  send_markers: true
-  marker_stale_seconds: 1800
-```
-
-ATAK clients connected to the same TAK Server receive the GeoChat messages and markers. No ATAK-side installation is necessary.
-
-### 7. Start the service
-
-Validate the Compose file and start the container:
-
-```bash
-docker compose config -q
-docker compose up -d --build
-docker compose logs --tail=100 -f broadcastify-tak-bridge
-```
-
-The first model download can take several minutes.
+For a completely manual installation, copy `.env.example`, `config.example.yml`, and `locations.example.yml` to their names without `.example`, place the three PEM files in `certs/`, and run `./bridge doctor`.
 
 ## Verify the deployment
 
-Check the health endpoint:
+Check the container and health endpoint:
 
 ```bash
-curl http://127.0.0.1:8080/health
+./bridge status
 ```
 
 A running service returns data similar to this example:
@@ -250,8 +161,7 @@ Then complete these checks:
 
 1. Connect ATAK to the configured TAK Server.
 2. Confirm that the configured GeoChat room receives a transcript.
-3. Speak or wait for a configured location alias.
-4. Confirm that ATAK receives a marker for that location.
+3. If location markers are configured, speak or wait for a configured alias and confirm that ATAK receives its marker.
 
 ## Configuration reference
 
@@ -307,10 +217,4 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
 python -m unittest discover -s tests -v
-```
-
-## Stop the service
-
-```bash
-docker compose down
 ```

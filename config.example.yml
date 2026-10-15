@@ -22,13 +22,11 @@ broadcastify:
   chunk_seconds: 10
   reconnect_max_seconds: 120
   channels:
-    - source: left
-      label: DISPATCH-L
-    - source: right
-      label: DISPATCH-R
+    - source: mono
+      label: DISPATCH
 
 whisper:
-  model: medium.en
+  model: ${WHISPER_MODEL}
   device: cpu
   compute_type: int8
   language: en
@@ -38,9 +36,9 @@ whisper:
     traffic collision, and structure fire.
 
 tak_output:
-  chat_room: DISPATCH
+  chat_room: ${TAK_CHAT_ROOM}
   sender_uid: broadcastify-bridge
-  sender_callsign: DISPATCH
+  sender_callsign: ${TAK_SENDER_CALLSIGN}
   send_markers: true
   marker_stale_seconds: 1800
 
